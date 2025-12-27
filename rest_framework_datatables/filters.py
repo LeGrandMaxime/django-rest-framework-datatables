@@ -31,6 +31,86 @@ def f_search_q(f, search_value, search_regex=False):
     return reduce(operator.or_, qs, Q())
 
 
+def get_column_control_q(field, value, logic, search_type='text'):
+    """
+    Helper function that returns a Q-object based on columnControl parameters.
+    
+    Args:
+        field: Field dictionary with 'name' list
+        value: Search value
+        logic: Logic operation (contains, notContains, equal, notEqual, 
+               starts, ends, empty, notEmpty, greater, greaterOrEqual, 
+               less, lessOrEqual)
+        search_type: Type of search (text, number, date, etc.)
+    
+    Returns:
+        Q-object for the filter
+    """
+    if not value and logic not in ('empty', 'notEmpty'):
+        return Q()
+    
+    qs = []
+    
+    for field_name in field['name']:
+        # Text-based operations
+        if logic == 'contains':
+            qs.append(Q(**{f'{field_name}__icontains': value}))
+        
+        elif logic == 'notContains':
+            qs.append(~Q(**{f'{field_name}__icontains': value}))
+        
+        elif logic == 'equal':
+            qs.append(Q(**{f'{field_name}__iexact': value}))
+        
+        elif logic == 'notEqual':
+            qs.append(~Q(**{f'{field_name}__iexact': value}))
+        
+        elif logic == 'starts':
+            qs.append(Q(**{f'{field_name}__istartswith': value}))
+        
+        elif logic == 'ends':
+            qs.append(Q(**{f'{field_name}__iendswith': value}))
+        
+        # Null/Empty checks
+        elif logic == 'empty':
+            qs.append(Q(**{f'{field_name}__isnull': True}) | Q(**{f'{field_name}__exact': ''}))
+        
+        elif logic == 'notEmpty':
+            qs.append(~Q(**{f'{field_name}__isnull': True}) & ~Q(**{f'{field_name}__exact': ''}))
+        
+        # Numeric comparison operations
+        elif logic == 'greater':
+            try:
+                numeric_value = float(value) if search_type == 'number' else value
+                qs.append(Q(**{f'{field_name}__gt': numeric_value}))
+            except (ValueError, TypeError):
+                # Si la conversion échoue, ignorer ce filtre
+                pass
+        
+        elif logic == 'greaterOrEqual':
+            try:
+                numeric_value = float(value) if search_type == 'number' else value
+                qs.append(Q(**{f'{field_name}__gte': numeric_value}))
+            except (ValueError, TypeError):
+                pass
+        
+        elif logic == 'less':
+            try:
+                numeric_value = float(value) if search_type == 'number' else value
+                qs.append(Q(**{f'{field_name}__lt': numeric_value}))
+            except (ValueError, TypeError):
+                pass
+        
+        elif logic == 'lessOrEqual':
+            try:
+                numeric_value = float(value) if search_type == 'number' else value
+                qs.append(Q(**{f'{field_name}__lte': numeric_value}))
+            except (ValueError, TypeError):
+                pass
+    
+    return reduce(operator.or_, qs, Q())
+
+
 class DatatablesBaseFilterBackend(BaseFilterBackend):
     """Base class for definining your own DatatablesFilterBackend classes"""
 
@@ -86,6 +166,20 @@ class DatatablesBaseFilterBackend(BaseFilterBackend):
                     request, '%s[%s]' % (search_col, 'regex')
                 ) == 'true',
             }
+            
+            # ColumnControl parameters
+            cc_col = f'columns[{i}][columnControl][search]'
+            cc_value = get_param(request, f'{cc_col}[value]')
+            cc_logic = get_param(request, f'{cc_col}[logic]')
+            cc_type = get_param(request, f'{cc_col}[type]')
+            
+            if cc_value is not None or cc_logic in ('empty', 'notEmpty'):
+                field['columnControl'] = {
+                    'value': cc_value,
+                    'logic': cc_logic,
+                    'type': cc_type,
+                }
+            
             fields.append(field)
             i += 1
         return fields
@@ -196,17 +290,34 @@ class DatatablesFilterBackend(DatatablesBaseFilterBackend):
         return queryset
 
     def get_q(self, datatables_query):
+        """Build Q-object combining standard and columnControl filters"""
         q = Q()
         initial_q = Q()
         for f in datatables_query['fields']:
             if not f['searchable']:
                 continue
-            q |= f_search_q(f,
-                            datatables_query['search_value'],
-                            datatables_query['search_regex'])
-            initial_q &= f_search_q(f,
-                                    f.get('search_value'),
-                                    f.get('search_regex', False))
+            
+            # ColumnControl filters take precedence
+            if 'columnControl' in f:
+                cc = f['columnControl']
+                cc_q = get_column_control_q(
+                    f,
+                    cc['value'],
+                    cc['logic'],
+                    cc['type']
+                )
+                if cc_q:
+                    initial_q &= cc_q
+            else:
+                # Standard search if no columnControl
+                q |= f_search_q(f,
+                                datatables_query['search_value'],
+                                datatables_query['search_regex'])
+                
+                initial_q &= f_search_q(f,
+                                        f.get('search_value'),
+                                        f.get('search_regex', False))
+        
         q &= initial_q
         return q
 
@@ -225,3 +336,4 @@ class DatatablesFilterBackend(DatatablesBaseFilterBackend):
             ))
         self.append_additional_ordering(ordering, view)
         return ordering
+        
