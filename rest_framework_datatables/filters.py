@@ -31,7 +31,7 @@ def f_search_q(f, search_value, search_regex=False):
     return reduce(operator.or_, qs, Q())
 
 
-def get_column_control_q(field, value, logic, search_type='text'):
+def get_column_control_q(field, value, logic,value_list ,search_type='text'):
     """
     Helper function that returns a Q-object based on columnControl parameters.
     
@@ -42,14 +42,15 @@ def get_column_control_q(field, value, logic, search_type='text'):
                starts, ends, empty, notEmpty, greater, greaterOrEqual, 
                less, lessOrEqual)
         search_type: Type of search (text, number, date, etc.)
+        value_list: List of values
     
     Returns:
         Q-object for the filter
     """
-    if not value and logic not in ('empty', 'notEmpty'):
-        return Q()
-    
     qs = []
+    # Handle list-based operations
+    if value_list not in (None, []):
+        qs.append(Q(**{f'{field['name'][0]}__in': value_list}))
     
     for field_name in field['name']:
         # Text-based operations
@@ -84,7 +85,6 @@ def get_column_control_q(field, value, logic, search_type='text'):
                 numeric_value = float(value) if search_type == 'number' else value
                 qs.append(Q(**{f'{field_name}__gt': numeric_value}))
             except (ValueError, TypeError):
-                # Si la conversion échoue, ignorer ce filtre
                 pass
         
         elif logic == 'greaterOrEqual':
@@ -173,11 +173,22 @@ class DatatablesBaseFilterBackend(BaseFilterBackend):
             cc_logic = get_param(request, f'{cc_col}[logic]')
             cc_type = get_param(request, f'{cc_col}[type]')
             
-            if cc_value is not None or cc_logic in ('empty', 'notEmpty'):
+            # ColumnControl list values
+            cc_list = []
+            j = 0
+            while True:
+                list_value = get_param(request, f'columns[{i}][columnControl][list][{j}]')
+                if list_value is None:
+                    break
+                cc_list.append(list_value)
+                j += 1
+            
+            if cc_value is not None or cc_logic in ('empty', 'notEmpty') or cc_list:
                 field['columnControl'] = {
                     'value': cc_value,
                     'logic': cc_logic,
                     'type': cc_type,
+                    'list': cc_list if cc_list else None,
                 }
             
             fields.append(field)
@@ -304,7 +315,8 @@ class DatatablesFilterBackend(DatatablesBaseFilterBackend):
                     f,
                     cc['value'],
                     cc['logic'],
-                    cc['type']
+                    cc['list'],
+                    cc['type'],
                 )
                 if cc_q:
                     initial_q &= cc_q
