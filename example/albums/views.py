@@ -29,6 +29,7 @@ def get_album_options():
 def get_columnControl():
     return "columnControl", {
         "rank": [obj.rank for obj in Album.objects.all()],
+        "artist.name": [obj.name for obj in Artist.objects.all()],
     }
 
 
