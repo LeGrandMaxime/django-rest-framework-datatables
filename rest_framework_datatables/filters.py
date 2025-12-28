@@ -31,7 +31,7 @@ def f_search_q(f, search_value, search_regex=False):
     return reduce(operator.or_, qs, Q())
 
 
-def get_column_control_q(field, value, logic,value_list ,search_type='text'):
+def get_column_control_q(field, value, logic,value_list ,search_type):
     """
     Helper function that returns a Q-object based on columnControl parameters.
     
@@ -187,8 +187,8 @@ class DatatablesBaseFilterBackend(BaseFilterBackend):
                 field['columnControl'] = {
                     'value': cc_value,
                     'logic': cc_logic,
+                    'list': cc_list,
                     'type': cc_type,
-                    'list': cc_list if cc_list else None,
                 }
             
             fields.append(field)
@@ -305,9 +305,6 @@ class DatatablesFilterBackend(DatatablesBaseFilterBackend):
         q = Q()
         initial_q = Q()
         for f in datatables_query['fields']:
-            if not f['searchable']:
-                continue
-            
             # ColumnControl filters take precedence
             if 'columnControl' in f:
                 cc = f['columnControl']
@@ -321,6 +318,8 @@ class DatatablesFilterBackend(DatatablesBaseFilterBackend):
                 if cc_q:
                     initial_q &= cc_q
             else:
+                if not f['searchable']:
+                    continue
                 # Standard search if no columnControl
                 q |= f_search_q(f,
                                 datatables_query['search_value'],
